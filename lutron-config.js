@@ -1,6 +1,7 @@
 
 var Telnet = require('telnet-client');
 var events = require("events");
+var Valid_Types = require('./device_types.js');
 
 module.exports = function (RED) {
 
@@ -12,6 +13,7 @@ module.exports = function (RED) {
         node.telnet = new Telnet();
         node.port = 23;
         this.deviceMap = config.deviceMap;
+        this.deviceType = config.deviceType;
         node.devices = {};
         node.lutronEvent = new events.EventEmitter();
         var params = {
@@ -70,8 +72,9 @@ module.exports = function (RED) {
                 var deviceId = parseInt(cs[1])
                 var action = parseInt(cs[2])
                 var param = parseFloat(cs[3])
-                //              console.log('[',cmd,',', type, ',',deviceId,
-                //              ',', action,',', param,']')
+// DEBUG
+                              console.log('[',cmd,',', type, ',',deviceId,
+                              ',', action,',', param,']')
                 this.lutronEvent.emit('data', {
                     cmd: cmd,
                     type: type,
