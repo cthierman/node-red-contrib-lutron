@@ -41,7 +41,9 @@ module.exports = function (RED) {
 	}
         this.on('input', function (msg) {
             // data is msg.payload
-            if (!isNaN(msg.payload)) {
+	    if ( typeof msg.topic === "string" && msg.topic === "QUERY" ) { // if topic = QUERY then
+		configNode.sendLutronStatus(this.devId);
+            } else if (!isNaN(msg.payload)) {
                 configNode.sendLutronCommand(this.devId, msg.payload, this.type); // no topic or not device. treat as OUTPUT
 	    } else if ( typeof msg.payload === "string" && command_tbl[ msg.payload ] !== undefined ) {
 			configNode.sendLutronCommand( this.devId, command_tbl[ msg.payload ], this.type );
