@@ -1,5 +1,6 @@
 
-var Telnet = require('telnet-client');
+//var Telnet = require('telnet-client');
+var Net = require('net');
 var events = require("events");
 var Valid_Types = require('./device_types.js');
 
@@ -7,15 +8,17 @@ module.exports = function (RED) {
 
     function LutronConfigNode(config) {
         RED.nodes.createNode(this, config);
+//	this.status({ fill: 'purple', shape: 'dot', text: 'disconnected' });
         this.lutronLoc = config.ipaddress;
         var node = this;
         node.connected = false;
-        node.telnet = new Telnet();
+//        node.telnet = new Telnet();
         node.port = 23;
         this.deviceMap = config.deviceMap;
         this.deviceType = config.deviceType;
         node.devices = {};
         node.lutronEvent = new events.EventEmitter();
+	node.lutronEvent.setMaxListeners(100);
         var params = {
             host: this.lutronLoc,
             port: this.port,
@@ -25,44 +28,102 @@ module.exports = function (RED) {
             password: 'integration',
             timeout: parseInt(config.timeout) || 45000
         };
+	node.params = params;
+
+	node.users = {};
+
+	this.register = function (lutronNode) {
+		node.users[lutronNode.id] = lutronNode;
+		if ( Object.keys(node.users).length === 1) {
+			if ( !node.connected && !node.connecting ) {
+				node.connecting = true;
+			}
+		} else if ( node.connected ) {
+			lutronNode.status({ fill: 'green', shape: 'dot', text: 'Connected' });
+		} else if ( !node.connecting ) { 
+			node.connecting = true;
+		}
+	}
+
+	console.log("Making connection to host");
+	node.client = Net.createConnection({ port: params.port, host: params.host });
+
         this.sendLutronCommand = function (devId, val, type) {
 	    if ( type === "DEVICE" ) {
             	var str = '#DEVICE,'+ devId +','+ val +',4';
 	    } else {
             	var str = '#OUTPUT,' + devId + ',1,' + val;
 	    }
-            this.telnet.getSocket().write(str + '\n');
+//            this.telnet.getSocket().write(str + '\n');
+	    this.client.write(str + '\n');
         };
         this.sendLutronStatus = function (devId) {
             var str = '?OUTPUT,' + devId + ',1';
-            this.telnet.getSocket().write(str + '\n');
+	    this.client.write(str + '\n');
+//            this.telnet.getSocket().write(str + '\n');
         };
-        this.telnet.on('data', (function (self, pkt) {
-            self.lutronRecv(pkt);
+
+//        this.telnet.on('data', (function (self, pkt) {
+	this.client.on('data', (function (self, pkt) {
+	    if ( this.connected ) {
+            	self.lutronRecv(pkt);
+	    } else {
+		var dataslice = pkt.toString().replace(/[\n\r]/g, '|').split('|');
+		console.log("Entering on data connection... dataslice.length="+dataslice.length+" dataslice[0]='"+dataslice[0]+"'");
+		for (var i = 0; i < dataslice.length; i++) {
+		    var datapacket = dataslice[i]
+		    if (datapacket !== '') {
+			console.log(" for Loop dataslice["+i+"]='"+dataslice[i]+"' datapacket='"+datapacket+"'");
+			if ( datapacket.substring(0, 5) === 'login' ) {
+				console.log('Login requested. Sending response. ' + node.params.username)
+				this.connecting = true;
+				this.connected = false;
+				node.client.write(node.params.username + '\r\n');
+			} else if ( datapacket.substring(0, 8) === 'password' ) {
+				console.log("sending password");
+				node.client.write(node.params.password + '\r\n');
+			} else if ( datapacket.substring(0, 5) === 'GNET>' ) {
+				console.log('Login succeeded.');
+				this.connected = true;
+				this.connecting = false;
+			}
+		    }
+		}
+	    }
         }).bind(null, node));
-        this.telnet.on('connect', function () {
-            this.connected = true;
-            console.log('telnet connect');
-        });
-        this.telnet.on('close', function () {
+
+//        this.telnet.on('connect', function () {
+//            this.connected = true;
+//	    this.connecting = false;
+////	    for ( var id in node.users ) {
+////		if ( node.users.hasOwnProperty(id) ) {
+////			node.users[id].status({ fill: 'green', shape: 'dot', text: 'Connected' });
+////		}
+////	    }
+//	    node.status({ fill: 'green', shape: 'dot', text: 'Connected' });
+//            console.log('telnet connect');
+//        });
+
+//        this.telnet.on('close', function () {
+        this.client.on('close', function () {
             this.connected = false;
+	    this.connecting = false;
+	    node.status({ fill: 'red', shape: 'dot', text: 'Disconnected' });
             console.log('telnet close');
         });
-        this.telnet.on('error', function () {
-            console.log('telent error');
+//        this.telnet.on('error', function (text) {
+        this.client.on('error', function (text) {
+            this.connected = false;
+	    this.connecting = false;
+	    node.status({ fill: 'red', shape: 'dot', text: 'Disconnected' });
+            console.log('telnet error: '+text);
         });
-        this.telnet.on('failedlogin', function () {
-            console.log('telent failed login');
-        });
-        this.lutronSend = function (msg, fn) {
-            this.telent.getSocket().write(msg + '\n', fn);
-        }
-        this.lutrongUpdate = function (deviceId, fn) {
-            this.lutronSend('?OUTPUT,' + deviceId + ',1', fn);
-        }
-        this.lutronSend = function (deviceId, val, fn) {
-            this.lutronSend('#OUTPUT,' + deviceId + ',1,' + val, fn);
-        }
+//        this.telnet.on('failedlogin', function (text) {
+//            this.connected = false;
+//	    this.connecting = false;
+//	    node.status({ fill: 'red', shape: 'dot', text: 'Disconnected' });
+//            console.log('telnet failed login: '+ text);
+//        });
         this.lutronRecv = function (data) {
             var st = data.toString().trim();
             var cmd = st[0]
@@ -93,7 +154,7 @@ module.exports = function (RED) {
                 }
             }
         }
-        this.telnet.connect(params);
+//        this.telnet.connect(params);
     }
     RED.nodes.registerType('lutron-config', LutronConfigNode);
 }
